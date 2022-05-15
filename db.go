@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -20,8 +19,11 @@ type DB struct {
 // Open concurrently opens each underlying physical db.
 // dataSourceNames must be a semi-comma separated list of DSNs with the first
 // one being used as the master and the rest as slaves.
-func Open(driverName, dataSourceNames string) (*DB, error) {
-	conns := strings.Split(dataSourceNames, ";")
+func Open(driverName, master string, slaves ...string) (*DB, error) {
+	conns := make([]string, len(slaves)+1)
+	conns[0] = master
+	copy(conns[1:], slaves)
+
 	db := &DB{pdbs: make([]*sql.DB, len(conns))}
 
 	err := scatter(len(db.pdbs), func(i int) (err error) {

@@ -23,11 +23,12 @@ import (
 func main() {
   // The first DSN is assumed to be the master and all
   // other to be slaves
-  dsns := "tcp://user:password@master/dbname;"
-  dsns += "tcp://user:password@slave01/dbname;"
-  dsns += "tcp://user:password@slave02/dbname"
+	var (
+        masterDsn = "tcp://user:password@master/dbname;"
+        slaveDsns = []string{"tcp://user:password@slave01/dbname","tcp://user:password@slave02/dbname"}
+	)
 
-  db, err := nap.Open("mysql", dsns)
+  db, err := nap.Open("mysql", masterDsn, slaveDsns...)
   if err != nil {
     log.Fatal(err)
   }
