@@ -4,16 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"regexp"
 	"sync/atomic"
 	"time"
+)
+
+const (
+	Mysql    = "mysql"
+	Postgres = "postgres"
+	Sqlite   = "sqlite3"
 )
 
 // DB is a logical database with multiple underlying physical databases
 // forming a single master multiple slaves topology.
 // Reads and writes are automatically directed to the correct physical db.
 type DB struct {
-	pdbs  []*sql.DB // Physical databases
-	count uint64    // Monotonically incrementing counter on each query
+	pdbs       []*sql.DB // Physical databases
+	count      uint64    // Monotonically incrementing counter on each query
+	driverName string    // Driver name
 }
 
 // Open concurrently opens each underlying physical db.
@@ -24,7 +32,10 @@ func Open(driverName, master string, slaves ...string) (*DB, error) {
 	conns[0] = master
 	copy(conns[1:], slaves)
 
-	db := &DB{pdbs: make([]*sql.DB, len(conns))}
+	db := &DB{
+		pdbs:       make([]*sql.DB, len(conns)),
+		driverName: driverName,
+	}
 
 	err := scatter(len(db.pdbs), func(i int) (err error) {
 		db.pdbs[i], err = sql.Open(driverName, conns[i])
@@ -48,6 +59,11 @@ func (db *DB) Close() error {
 // Driver returns the physical database's underlying driver.
 func (db *DB) Driver() driver.Driver {
 	return db.Master().Driver()
+}
+
+// DriverName returns the driver name
+func (db *DB) DriverName() string {
+	return db.driverName
 }
 
 // Begin starts a transaction on the master. The isolation level is dependent on the driver.
@@ -134,14 +150,14 @@ func (db *DB) PrepareContext(ctx context.Context, query string) (Stmt, error) {
 // The args are for any placeholder parameters in the query.
 // Query uses a slave as the physical db.
 func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return db.Slave().Query(query, args...)
+	return db.SlaveWithQuery(query).Query(query, args...)
 }
 
 // QueryContext executes a query that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 // QueryContext uses a slave as the physical db.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	return db.Slave().QueryContext(ctx, query, args...)
+	return db.SlaveWithQuery(query).QueryContext(ctx, query, args...)
 }
 
 // QueryRow executes a query that is expected to return at most one row.
@@ -149,7 +165,7 @@ func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{
 // Errors are deferred until Row's Scan method is called.
 // QueryRow uses a slave as the physical db.
 func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
-	return db.Slave().QueryRow(query, args...)
+	return db.SlaveWithQuery(query).QueryRow(query, args...)
 }
 
 // QueryRowContext executes a query that is expected to return at most one row.
@@ -157,7 +173,7 @@ func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
 // Errors are deferred until Row's Scan method is called.
 // QueryRowContext uses a slave as the physical db.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return db.Slave().QueryRowContext(ctx, query, args...)
+	return db.SlaveWithQuery(query).QueryRowContext(ctx, query, args...)
 }
 
 // SetMaxIdleConns sets the maximum number of connections in the idle
@@ -197,6 +213,17 @@ func (db *DB) Slave() *sql.DB {
 	return db.pdbs[db.slave(len(db.pdbs))]
 }
 
+// SlaveWithQuery returns one of the physical databases which is a slave
+// master database is returned if slaves is empty or RETURNING is used with postgres
+func (db *DB) SlaveWithQuery(query string) *sql.DB {
+	n := db.slave(len(db.pdbs))
+	if n == 0 || isQueryUpdate(db.driverName, query) {
+		return db.pdbs[0]
+	}
+
+	return db.pdbs[db.slave(len(db.pdbs))]
+}
+
 // Master returns the master physical database
 func (db *DB) Master() *sql.DB {
 	return db.pdbs[0]
@@ -206,5 +233,20 @@ func (db *DB) slave(n int) int {
 	if n <= 1 {
 		return 0
 	}
+
 	return int(1 + (atomic.AddUint64(&db.count, 1) % uint64(n-1)))
+}
+
+// RETURNING on postgres is used for retrieving Data from modified Rows
+var pgReturning = regexp.MustCompile("(?i) RETURNING ")
+
+// isQueryUpdate returns true if the query is an update query
+// todo(yiplee): this is a hack, use a parser to determine if the query is an update query
+func isQueryUpdate(driverName, query string) bool {
+	switch {
+	case driverName == Postgres && pgReturning.MatchString(query):
+		return true
+	}
+
+	return false
 }
