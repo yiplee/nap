@@ -51,6 +51,7 @@ func (s *stmt) QueryRow(args ...interface{}) *sql.Row {
 	return s.slave().QueryRow(args...)
 }
 
+// slave returns a slave stmt as the underlying physical db.
 func (s *stmt) slave() *sql.Stmt {
 	n := s.db.slave(len(s.stmts))
 	if n == 0 || s.isQueryUpdate {
