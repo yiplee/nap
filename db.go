@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"regexp"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
@@ -78,6 +79,28 @@ func (db *DB) Begin() (*sql.Tx, error) {
 // an error will be returned.
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
 	return db.Master().BeginTx(ctx, opts)
+}
+
+// UpdateTx start a transaction in a function block with rollbaclk & commit automatically
+func (db *DB) UpdateTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			err = tx.Rollback()
+			debug.PrintStack()
+		} else if err != nil {
+			_ = tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	err = fn(tx)
+	return err
 }
 
 // Exec executes a query without returning any rows.
