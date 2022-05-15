@@ -147,7 +147,11 @@ func (db *DB) Prepare(query string) (Stmt, error) {
 		return nil, err
 	}
 
-	return &stmt{db: db, stmts: stmts}, nil
+	return &stmt{
+		db:            db,
+		stmts:         stmts,
+		isQueryUpdate: isQueryUpdate(db.driverName, query),
+	}, nil
 }
 
 // PrepareContext creates a prepared statement for later queries or executions
@@ -166,7 +170,12 @@ func (db *DB) PrepareContext(ctx context.Context, query string) (Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &stmt{db: db, stmts: stmts}, nil
+
+	return &stmt{
+		db:            db,
+		stmts:         stmts,
+		isQueryUpdate: isQueryUpdate(db.driverName, query),
+	}, nil
 }
 
 // Query executes a query that returns rows, typically a SELECT.
@@ -244,7 +253,7 @@ func (db *DB) SlaveWithQuery(query string) *sql.DB {
 		return db.pdbs[0]
 	}
 
-	return db.pdbs[db.slave(len(db.pdbs))]
+	return db.pdbs[n]
 }
 
 // Master returns the master physical database

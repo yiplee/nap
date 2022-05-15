@@ -14,8 +14,9 @@ type Stmt interface {
 }
 
 type stmt struct {
-	db    *DB
-	stmts []*sql.Stmt
+	db            *DB
+	stmts         []*sql.Stmt
+	isQueryUpdate bool
 }
 
 // Close closes the statement by concurrently closing all underlying
@@ -37,7 +38,7 @@ func (s *stmt) Exec(args ...interface{}) (sql.Result, error) {
 // arguments and returns the query results as a *sql.Rows.
 // Query uses a slave as the underlying physical db.
 func (s *stmt) Query(args ...interface{}) (*sql.Rows, error) {
-	return s.stmts[s.db.slave(len(s.db.pdbs))].Query(args...)
+	return s.slave().Query(args...)
 }
 
 // QueryRow executes a prepared query statement with the given arguments.
@@ -47,5 +48,14 @@ func (s *stmt) Query(args ...interface{}) (*sql.Rows, error) {
 // Otherwise, the *sql.Row's Scan scans the first selected row and discards the rest.
 // QueryRow uses a slave as the underlying physical db.
 func (s *stmt) QueryRow(args ...interface{}) *sql.Row {
-	return s.stmts[s.db.slave(len(s.db.pdbs))].QueryRow(args...)
+	return s.slave().QueryRow(args...)
+}
+
+func (s *stmt) slave() *sql.Stmt {
+	n := s.db.slave(len(s.stmts))
+	if n == 0 || s.isQueryUpdate {
+		return s.stmts[0]
+	}
+
+	return s.stmts[n]
 }
